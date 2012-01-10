@@ -9,9 +9,10 @@
 #- It's important to note these broadcast tests will only function on two seperate IP's (two different computers)
 # See included "License.txt"
 from atools import *
+import conf
 
 #- Create a socket manager using the select backend
-manager = asocketManager(backend = 'select')
+manager = asocketManager(backend = conf.backend)
 #- Get a managed socket, pass in any parameters
 client = manager.getSocket(protocol = 'udp', bufferSize = 1024)
 client.setBroadcast()

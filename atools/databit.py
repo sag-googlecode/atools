@@ -79,6 +79,7 @@ class databit(list):
 
 		self.__init__(l, self.compress)
 
+
 if __name__ == '__main__':
 	print databit(databit(['This', 'is', 'a', 'databit', 'test', True, False, 0.00000003037, 3037]).get())
 	two = databit([

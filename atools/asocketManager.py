@@ -20,7 +20,7 @@ class _selectBackend:
 		writeList = []
 
 		actualSockets = self.__manager.getSockets()
-		for socket in actualSockets:
+		for i, socket in enumerate(actualSockets):
 			socket._doConnect() #- It already knows if it's connecting
 
 			if socket.isBroken() or socket.isUnableToConnect():
@@ -31,7 +31,7 @@ class _selectBackend:
 			if socket.hasOutgoingData():
 				writeList.append(socket)
 
-		read, write, error = select(readList, writeList, [], 0)
+		read, write, error = select(readList, writeList, [], selectTime)
 		if len(read) > 0:
 			client = socket._doAccept()
 			if client:

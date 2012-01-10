@@ -8,9 +8,10 @@
 #- Atools, test_udpClient.py is a simple test for running a UDP client using atools/asocket
 # See included "License.txt"
 from atools import *
+import conf
 
 #- Create a socket manager using the select backend
-manager = asocketManager(backend = 'select')
+manager = asocketManager(backend = conf.backend)
 #- Get a managed socket, pass in any parameters
 client = manager.getSocket(protocol = 'udp', bufferSize = 1024)
 

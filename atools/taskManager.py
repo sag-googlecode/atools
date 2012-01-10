@@ -12,9 +12,9 @@ import time
 
 
 class task:
-	done = 1
-	cont = 2
-	again = 3
+	done = None
+	cont = 1
+	again = 2
 	def __init__(self, time, method, extraArgs, sort):
 		self.runningTime = 0
 		self.time = time
@@ -40,28 +40,33 @@ class taskManager:
 		elapsedTime = newTime - self.lastTime
 		for taskName, task in self.tasklets.items():
 			#- Call this task RIGHT now
-			ret = None
+			called = False
 			if task.time <= 0:
 				ret = task.method(*(task,) + task.extraArgs)
+				called = True
 			else:
 				task.runningTime += elapsedTime
 				if task.runningTime >= task.time:
 					ret = task.method(*(task,) + task.extraArgs)
+					called = True
 
-			if ret == task.cont:
-				#- The task is still running
-				#- task.cont is only returned for non-doMethodLater tasks
-				#- so in the event that a doMethodLater task returns task.cont
-				#- it will continue to run.. each frame
-				#- otherwise you should have returned task.again
-				task.time = 0 #- Assign the time to 0 that way it run's each frame
-			elif ret == task.again:
-				#- The task should be stop then started
-				self.remove(taskName) #- Remove it
-				self.doMethodLater(task.time, task.method, taskName, task.extraArgs, task.sort) #- Add it
-			elif ret == task.done:
-				#- The task is finished, kill it
-				self.remove(taskName)
+			if called:
+				if ret == task.cont:
+					#- The task is still running
+					#- task.cont is only returned for non-doMethodLater tasks
+					#- so in the event that a doMethodLater task returns task.cont
+					#- it will continue to run.. each frame
+					#- otherwise you should have returned task.again
+					task.time = 0 #- Assign the time to 0 that way it run's each frame
+				elif ret == task.again:
+					#- The task should be stop then started
+					self.remove(taskName) #- Remove it
+					self.doMethodLater(task.time, task.method, taskName, task.extraArgs, task.sort) #- Add it
+				elif ret == task.done:
+					#- The task is finished, kill it
+					self.remove(taskName)
+				else:
+					raise Exception('Task "%s" must return task.cont, task.again, or task.done / None' % taskName)
 		self.lastTime = newTime
 
 	def remove(self, taskName):

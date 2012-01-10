@@ -28,5 +28,33 @@ Why does lightSql use the python-mysql module?
 	always changing, we figgured this would bring in version issues, lightSql would be tied to only one
 	version of MYSQL, bad things would happen.
 
+Why am I being limited to around 1000 open sockets (file descriptors)?
+	It could be one of these:
+		You OS has an per-process limit of how many file descriptors can be open.
+		You're using the select backend, which can only handle about 1024 sockets.
+
+	To fix these:
+		OS limit:
+			atools/asocket provides a way to set the OS limit of number of files open
+			used as such:
+
+			"from atools import *"
+			"asocket.setMaxFiles(60000, silent = True)"
+
+			65536 is the maximum possible, however you may only be allowed to change the limit
+			to a certain amount (on my machine I can only go to 4096) without having root or admin
+			priviledges, if this is the case, it will raise an exception.
+			If silent is True (default) no exception will be raised, it will be printed.
+			If silent is False, the exception will be raised.
+
+			Warning: Your OS also needs file descriptors open too, if you use all of them,
+			other programs might crash. I would advice leaving your OS plenty.
+			For this reason, I would just round the number off, and use 60,000 as a max.
+
+		Backend limits:
+			Make sure you're using a backend other than select, since it can only handle about 1024 sockets.
+			Use either poll, or epoll, depending on what's available
+
+
 We appreciate feedback,
 The Lightpoke team, www.lightpoke.com

@@ -7,8 +7,10 @@
 ###########################
 #- Atools, asocket.py provides a non-blocking TCP and UDP socket with multicast support
 # See included "License.txt"
+from chunkSplitter import *
 from Queue import deque
 import subprocess
+import resource
 import socket
 import errno
 import sys
@@ -55,6 +57,42 @@ class asocketError(Exception):
 
 
 class asocket:
+	error = asocketError
+
+	@staticmethod
+	def setMaxFiles(maximum, silent = True):
+		soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+		targetHard = hard
+
+		if maximum > targetHard:
+			targetHard = maximum
+		try:
+			resource.setrlimit(resource.RLIMIT_NOFILE, (maximum, targetHard))
+		except ValueError:
+			resource.setrlimit(resource.RLIMIT_NOFILE, (hard, hard))
+			msg = 'setMaxFiles() Unable to change the hard limit to %s' % targetHard
+			if silent:
+				msg2 = 'setMaxFiles() silently changed the limit to max we could, %s' % hard
+				print msg
+				print msg2
+			else:
+				msg2 = 'setMaxFiles() changed the limit to max we could, %s' % hard
+				ex = asocketError(msg + '\n' + msg2, asocketError.permissionDenied)
+				raise ex
+
+	@staticmethod
+	def getMaxFiles():
+		#- Returns the soft limit of number of files (meaning the current per-process limit)
+		return resource.getrlimit(resource.RLIMIT_NOFILE)[0]
+
+	@staticmethod
+	def getLocalAddress(*args, **kwargs):
+		return getLocalAddress(*args, **kwargs)
+
+	@staticmethod
+	def getHostByName(host):
+		return socket.gethostbyname(host)
+
 	def __init__(self, protocol = 'tcp', bufferSize = 1024, backlog = 5, ipv6 = False, socketObject = None):
 		self.__protocol = protocol
 		self.__bufferSize = bufferSize
@@ -63,15 +101,18 @@ class asocket:
 		self.__socket = socketObject
 
 		self.__outgoingQueue = deque()
-		self.__incomingQueue = deque()
+		if protocol == 'udp':
+			self.__incomingQueue = deque()
+		else:
+			self.__incomingQueue = chunkSplitter()
 		self.__connectionQueue = None
 		self.__bytesSent = 0
 		self.__bytesRead = 0
-		self.__localIp = None
 		self.__bound = None
 		self.__broken = ''
 		self.__connected = False
 		self.__connecting = None
+		self.__isConnecting = False
 		self.__isUnableToConnect = False
 		self.__shuttingDown = ''
 
@@ -88,7 +129,11 @@ class asocket:
 			elif self.__protocol == 'udp':
 				proto = socket.SOCK_DGRAM
 
-			self.__socket = socket.socket(inet, proto)
+			try:
+				self.__socket = socket.socket(inet, proto)
+			except socket.error as i:
+				if i.errno == errno.EMFILE: #- Too many open file descriptors
+					raise asocketError('Too many open files, try using asocket.setMaxFiles', asocketError.maxFilesError)
 
 	def send(self, data):
 		if self.__protocol == 'udp':
@@ -97,7 +142,7 @@ class asocket:
 			raise asocketError('argument to send, data, must be of type str or unicode', asocketError.programmerError)
 		if data == '':
 			return
-		self.__outgoingQueue.append(data)
+		self.__outgoingQueue.append(chunkPacket(data))
 
 	def sendTo(self, data, address):
 		if self.__protocol == 'tcp':
@@ -118,18 +163,20 @@ class asocket:
 		self.__outgoingQueue.append((data, address))
 		self._doWrite() #- We can do this right now because we know we're UDP and this is non-blocking
 
-	def connect(self, host, port):
+	def connect(self, host, port, doLookup = True):
 		if self.__protocol == 'udp':
 			raise asocketError('udp socket has no attribute connect, use sendTo instead', asocketError.programmerError)
+		if doLookup:
+			if self.__ipv6:
+				pass
+			else:
+				host = socket.gethostbyname(host)
 		self.__connecting = (host, port)
+		self.__isConnecting = True
 
 	def setBroadcast(self):
 		if self.__protocol == 'tcp':
 			raise asocketError('tcp socket has no attribute setBroadcast', asocketError.programmerError)
-		ip = getLocalAddress()
-		if ip == None:
-			raise asocketError('Unable to detect local IP address via ipconfig or ifconfig')
-		self.__localIp = ip
 		self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 		self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
@@ -160,17 +207,19 @@ class asocket:
 
 	def _doConnect(self):
 		if self.__connecting:
+			self.__socket.setblocking(False)
 			ret = self.__socket.connect_ex(self.__connecting)
+			self.__socket.setblocking(True)
 			if ret == errno.ECONNREFUSED or ret == errno.ETIMEDOUT:
 				self.__connected = False
-				self.__connecting = None
+				self.__isConnecting = False
 				self.__unableToConnect = True
 			elif ret == errno.EINPROGRESS or ret == errno.EALREADY or ret == errno.EWOULDBLOCK or ret == errno.EINVAL:
 				#- Still connecting as we should
 				pass
 			elif ret == errno.EISCONN or ret == 0:
 				self.__connected = True
-				self.__connecting = None
+				self.__isConnecting = False
 				self.__unableToConnect = False
 
 	def _doWrite(self):
@@ -181,6 +230,7 @@ class asocket:
 				self.__bytesSent += len(data)
 				self.__socket.sendto(data, address)
 			elif self.__connected:
+				data = data.get()
 				bytesActuallySent = self.__socket.send(data)
 				leftOvers = data[bytesActuallySent:]
 				if leftOvers:
@@ -211,15 +261,11 @@ class asocket:
 		if data:
 			if self.__protocol == 'udp':
 				useData = True
-				if self.__localIp:
-					if self.__localIp == addr[0]:
-						useData = False #- It's our own UDP packet!
-				if useData:
-					self.__bytesRead += len(data)
-					self.__incomingQueue.append((data, addr))
+				self.__bytesRead += len(data)
+				self.__incomingQueue.append((data, addr))
 			else:
 				self.__bytesRead += len(data)
-				self.__incomingQueue.append(data)
+				self.__incomingQueue.feed(data)
 		else: #- It could be an empty TCP message, which sometimes happens when the other end dies, if it is goodbye!
 			if self.__broken:
 				pass
@@ -273,21 +319,22 @@ class asocket:
 		return self.__socket.getsockname()
 
 	def getPeerAddress(self):
-		if self.__connected:
+		try:
 			return self.__socket.getpeername()
-		elif self.__connecting:
-			return self.__connecting
-		else:
-			return None
+		except socket.error as i:
+			if i.errno == errno.ENOTCONN:
+				if self.__connecting:
+					return self.__connecting
+				else:
+					return None
+			else:
+				raise
 
 	def isConnected(self):
 		return self.__connected
 
 	def isConnecting(self):
-		if self.__connecting:
-			return True
-		else:
-			return False
+		return self.__isConnecting
 
 	def isUnableToConnect(self):
 		return self.__isUnableToConnect

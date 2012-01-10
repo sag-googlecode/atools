@@ -44,7 +44,10 @@ class chunkSplitter(deque):
 		self.__buffer = str()
 
 	def get(self):
-		return self.popleft()
+		try:
+			return self.popleft()
+		except IndexError:
+			return None
 
 	def __str__(self):
 		return repr(self)
